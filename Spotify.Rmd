@@ -1,0 +1,952 @@
+---
+title: "Group project"
+author: 
+ - PENG Yizhuang^[Student in NUS, yizhuang.peng@u.nus.edu]
+ - LI Jingzhe^[Student in NUS, lijingzhe@u.nus.edu]
+ - DONG Siting^[Student in NUS, siting_dong@u.nus.edu]
+ - LI Zhiqi^[Student in NUS, lizhiqi@u.nus.edu]
+ - CHEN Hao^[Student in NUS, chen.hao@u.nus.edu]
+date: "Updated: `r Sys.Date()`"
+output:
+  html_document:
+    code_download: true
+    number_sections: true
+    fig_caption: true
+    toc: true
+    fig_width: 7
+    fig_height: 4.5
+    theme: cosmo
+    highlight: tango
+    code_folding: hide
+
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(stringr)
+library(corrplot)
+library(fmsb)
+library(RColorBrewer)
+library(scales)
+library(purrr)
+library(car)
+library(wordcloud)
+library(wordcloud2)
+library(tm)
+library(sentimentr)
+
+load("spotify_2000.Rda")
+years <- c("2015","2016","2017","2018","2019","2020")
+spot <- spotify_2000 %>% filter(year %in% years)
+```
+
+
+#       Introduction
+
+## Background Information
+
+Spotify is an online music streaming service platform founded in Sweden in April 2006. Currently,  it is one of the world's largest streaming music service provider. In 2019, the monthly active users of Spotify arrived at 271 million, which contribute to 8 billion revenue. However, Spotify needs to pay nearly $6 billion in royalties to artists per year in order to support their enormous streaming service. Therefore, the profit margin of Spotify is relatively low. 
+
+## Project Aim
+
+Our project aims to help Spotify to reduce their investment in royalties by identify what are the attributes that made a song popular, and the platform could make use of the web tool to invest on the songs that are more likely to be popular while decrease the investment in other songs in the future.
+
+## Dataset Selection
+
+The dataset we selected contains about 12,000 songs on Spotify from year 2015-2020, which includes the following information of each track:
+
+<code><b>Basic Information:</b> </code>
+
+<code><i>id</i> </code> 
+
+<code><i>year</i> </code> 
+
+<code><i>release_date</i> </code> 
+
+<code><i>artists</i> </code> (List of artists mentioned)
+
+<code><i>name</i> </code> (Name of the song)
+
+
+<code><b>Numerical Variables:</b> </code>
+
+<code><i>acousticness</i> </code> (acoustic pleasant, Ranges from 0 to 1)
+
+<code><i>danceability</i> </code> (Ranges from 0 to 1)
+
+<code><i>energy</i> </code> (Ranges from 0 to 1) 
+
+<code><i>duration_ms</i> </code> (Integer typically ranging from 200k to 300k)
+
+<code><i>instrumentalness</i> </code> (Instrument use density in a song, Ranges from 0 to 1)
+
+<code><i>valence</i> </code> (electric remix of musics, Ranges from 0 to 1)
+
+<code><i>popularity</i> </code> (Based on the likes quantity in Spotify, Ranges from 0 to 100) 
+
+<code><i>tempo</i> </code> (Float typically ranging from 50 to 150)
+
+<code><i>liveness</i> </code> (Ranges from 0 to 1)
+
+<code><i>loudness</i> </code> (dB, Float typically ranging from -60 to 0)
+
+<code><i>speechiness</i> </code> (related to the density of lyrics, Ranges from 0 to 1)
+
+<code><i>key</i> </code> (All keys on octave encoded as values ranging from 0 to 11) 
+
+
+<code><b>Dummy:</b> </code>
+
+
+<code><i>mode</i> </code> (0 = Minor, 1 = Major) 
+
+<code><i>explicit</i> </code> (related to dirty language used in a song, 0 = No explicit content, 1 = Explicit content)
+
+
+#    Visualize Data  
+
+## Distribution of the numeric variables
+
+```{r}
+spotsub <- spot[,c("acousticness","danceability","duration_ms","energy","instrumentalness","key","liveness","loudness","mode","speechiness","tempo","valence")]
+  
+names(spotsub)[6] <- "Keys"
+spotsub <- spotsub %>% gather()
+p1 <- spotsub %>% ggplot(aes(value)) + facet_wrap(~ key, scales = "free", ncol = 3) + geom_density(color="darkblue") + ggtitle("Distribution of the Attributes") + theme(plot.title = element_text(size = 14, face = "bold"), text = element_text(size = 12))
+p1
+```
+
+We could see the distribution of the variables from this graph. Some variables are heavily skewed. For instance, most of the values fall close to zero for the attribute instrumentalness, which lead to the heavily right-skewed distribution. 
+The attributes are also of different scale and thus certain normalization has to be done at the later part.
+
+## Correlation matrix between the variables
+
+```{r}
+music <- spot[,c(1,3,4,5,8,9,10,11,14,16,17,18,20)]
+relation <- cor(music)
+correlation <- corrplot(relation, type = "full", order = "hclust", tl.col = "black", tl.srt = 45, title = "Correlation between the Attributes",mar=c(0,0,1,0))
+```
+
+We could see strong correlation between some attributes. For example, loudness is highly positively correlated with danceability and valence, so is valence with speechiness with danceability. There is a strong correlation between loudness and energy. There is also a strong correlation between instrumentalness and acousticness. 
+
+In contrary, there is high negative correlation between energy, loudness and acousticness, so is danceability and instrumentalness, which makes sense as these attributes clearly indicates tracks of complete opposite genre.
+
+It can also be inferred that there is a positive correlation between popularity and danceability, whereas there is a negative correlation between duration and popularity. These findings require further examination in the later parts.
+
+## Audio characteristics throughout the years
+```{r}
+audio <- c("acousticness","danceability","speechiness","valence","instrumentalness")
+audio_character <- spot %>% select(audio,year) %>% group_by(year) %>% summarize(accousticness = mean(acousticness),danceability = mean(danceability), speechiness = mean(speechiness), valence=mean(valence),instrumentalness=mean(instrumentalness))
+audio <- gather(audio_character,"Audio Characteristics",value, -year)
+
+audiocharact <- ggplot(data=audio, aes(x=year, y=value, group = `Audio Characteristics`, colour = `Audio Characteristics`)) + geom_line() +
+  ggtitle("Trend of the Audio Characteristics") + xlab("Year") + ylab("Value") + theme_bw() + 
+  theme(plot.title = element_text(size = 14, face = "bold"), text = element_text(size = 12))
+
+audiocharact
+```
+
+Audio attributes with significant differences throughout the years are included in the graph. As we can see, tracks have become more danceable in the recent years, so is valence and speechiness, which supports the previous correlation matrix that these highly correlated attributes has increased together.
+
+Though we couldn't really infer that there is a decrease in the attribute on accousticness and instrumentalness in the recent years, we could see that these two attributes move together with the same pattern in trend.
+
+## Top artists/tracks {.tabset .tabset-fade .tabset-pills}
+
+### Top 20 artists with most songs on the list
+```{r}
+spot$artist <- spot$artists %>% str_replace_all("\\[|\\]", "") %>% str_replace_all("'", "")
+top_artist <- spot %>% select(artist,popularity) %>% group_by(artist) %>% 
+  summarise(Count = n(), Popularity = sum(popularity)) %>% 
+  arrange(desc(Count)) %>% 
+  mutate("Artist Popularity" = Popularity/Count)
+top20artist <- top_artist %>% slice_max(Count, n = 20) 
+popular_range <- c(50,60,65,70,75)
+Labels = c("<60","60-65","65-70",">70") 
+top20artist$popularrange <- cut((top20artist$`Artist Popularity`), breaks=popular_range, labels = Labels, include.lowest = T, ordered_result = T)
+
+top_artists <- ggplot(data = top20artist,aes(x = reorder(artist, Count), y = Count)) + geom_bar(stat='identity',aes(fill = popularrange)) + 
+  scale_fill_manual(values = c("lightskyblue", "deepskyblue", "blue", "navy"), name = "Average song popularity") + ggtitle("Top 20 Artists") + 
+  xlab("Artist") + ylab("Number of Songs") + theme_bw() + theme(plot.title = element_text(size = 14, face = "bold"), text = element_text(size = 12)) + 
+  theme(axis.text.x = element_text(angle=90, vjust=1, hjust=1)) + coord_flip()
+
+top_artists
+```
+
+The artists that produced most songs in the recent years is BTS. Out of the top 20 artists that produced most songs, XXXTENTACION has the highest average song popularity, which ranks the artists as the top artist on Spotify in recent years.
+
+The songs produced by the top 20 artists are generally popular as well, with only 1 of the artist has an average song popularity less than 60, and 7 of the artists has very high average song popularity exceeding 70.
+
+Nearly all of the top 10 artists among the top 20 artists are Hiphop singers or rappers. Thus, at this point, we could predict that probably speechiness will be a high influential factor on popularity.
+
+### Top 20 songs with highest duration and popularity
+
+```{r}
+duration <- spot %>% select(name,artist,popularity,duration_ms,year) %>% arrange(desc(duration_ms)) %>% slice(1:20)
+duration$name <- gsub("White Noise Sleeping Aid to Help My Baby Fall Asleep, Sleep Through the Night", "White Noise",duration$name)
+duration$name <- gsub("Piano Concerto in A Minor, Op.16: I. Allegro molto moderato", "Piano Concerto",duration$name)
+pop_range <- c(50,55,60,65,70,80)
+Label = c("50-55","55-60","60-65","65-70",">70") 
+duration$popularrange <- cut((duration$popularity), breaks=pop_range, labels = Label, include.lowest = T, ordered_result = T)
+
+top_durations <- ggplot(data = duration, aes(x = reorder(name,-duration_ms), y = duration_ms)) + 
+  geom_bar(stat='identity',aes(fill = popularrange)) + 
+  scale_fill_manual(values = c("lightskyblue", "deepskyblue", "blue", "navy","purple1"), name = "Song's popularity") + 
+  ggtitle("Top 20 tracks with longest duration") + xlab("Song Name") + ylab("Duration") + theme_bw() + 
+  theme(plot.title = element_text(size = 14, face = "bold"), text = element_text(size = 10)) + 
+  theme(axis.text.x = element_text(size = 6, angle=25, vjust=1, hjust=1))
+
+top_durations
+```
+
+Tracks with the longest duration are generally less popular, as out of the 20 tracks with longest duration, only 1 track has a popular score over 70. The other songs mostly falls within the popularity range of 50 to 65.
+
+### Top 5 most popular song of each year using a circular barplot
+
+```{r,fig.width=10,fig.height=6} 
+popsongs <- spot %>% select(name,artist,popularity,year) %>% arrange(desc(popularity)) %>% group_by(year) %>% slice(1:5)
+popsub <- popsongs %>% select(name,popularity,year)
+popsub <- popsub %>% arrange(year, popularity)
+popsub$id<-seq(1,nrow(popsub))
+angle <- 90 - 360 * (popsub$id-0.5) /nrow(popsub)
+popsub$hjust<-ifelse(angle < -90, 1, 0)
+popsub$angle<-ifelse(angle < -90, angle+180, angle)
+legend_title <- "Top 5 Tracks of each year"
+p <- ggplot(popsub,aes(x=as.factor(id),y=popularity))+ geom_bar(stat="identity",aes(fill=as.factor(popsub$year))) + coord_polar() + ylim(-35,120) + geom_text(aes(x = id,y = popularity+ 20,label = name, angle = angle),size=2,hjust=popsub$hjust,angle= popsub$angle) + theme_minimal() + ylab("Popularity") + xlab("") + ggtitle("Top 5 Tracks of each year") + theme(plot.title = element_text(size = 22, face = "bold", vjust = 1.5), axis.text.y = element_blank(),axis.ticks.y = element_blank(), axis.text.x = element_blank()) + scale_fill_brewer(legend_title, palette = "Set2") 
+p
+```
+
+From this chart, we can see that the top 5 tracks of each year are from different genres. For instance, the top 5 songs of 2017 consists of love songs, hiphop music, and background music that is without any lyrics. Thus, further examination need to be conducted to understand what is the influential factor for a track to be popular.
+
+Most of these songs are from the top 20 artists shown above. Thus, artists' popularity could play a big part in determining the popularity of the track. Thus, we could explore further on the audio attribute of the tracks produced by the top artists.
+
+### Top 5 songs and individual analysis/audio characteristics
+
+```{r,fig.width=12,fig.height=8}
+audio <- c("acousticness","danceability","energy","speechiness","liveness","valence")
+topsongs <- spot %>% select(audio,name,popularity,year,artist) %>% arrange(desc(popularity)) %>% slice(1:5)
+topsongsub <- topsongs %>% select(audio)
+topsongsub <- as.data.frame(topsongsub)
+rownames(topsongsub) <- topsongs$name
+topsongsub<-rbind(rep(1,6),rep(0,10),topsongsub) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(topsongsub[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder , pfcol=colorsin , plwd=6 , plty=1, cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.5, "Audio Characteristics of the top 5 Popular Songs", font = 2)
+legend("bottomright", legend = rownames(topsongsub[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+The top 5 most popular songs in recent years are "Blinding Lights", "ROCKSTAR","death bed","THE SCOTTS" and "The Box". A commonality is that most of the songs tend to be high on danceability and energy, while accousticness is not a high factor for most of the popular songs.
+
+## Top 5 Artists and their song's attribute {.tabset .tabset-fade .tabset-pills}
+
+### XXXTENTACION's song attributes
+```{r,fig.width=10.5,fig.height=5.5}
+XTC <- spot %>% filter(artist == "XXXTENTACION") %>% select(audio, artist, popularity,name) %>% arrange(desc(popularity)) %>% slice(1:5)
+XTC <- as.data.frame(XTC)
+rownames(XTC) <- XTC$name
+XTC2 <- XTC[,c(1,2,3,4,5,6)]
+df <-rbind(rep(1,6),rep(0,10),XTC2) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(df[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder, pfcol=colorsin , plwd=4 , plty=1,cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.2, "XXXTENTACION's Top Songs", font = 2)
+legend("right", legend = rownames(df[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+From the top 20 artists, we have selected top 5 artists based on the number of songs they produced and the average popularity of their songs. The 5 artists selected are XXXTENTACION, The Weeknd, Travis Scott, Juice WRLD and Taylor Swift. The audio characteristics of each artists' top 5 songs are shown.
+
+XXXTENTACION's songs are particular concentrated in the attribute acousticness, energy and danceability. Liveness is not a high factor for most of his songs.
+
+### The Weeknd's song attributes
+```{r,fig.width=10.5,fig.height=5.5}
+TWK <- spot %>% filter(artist == "The Weeknd") %>% select(audio, artist, popularity,name) %>% arrange(desc(popularity)) %>% slice(1:5)
+TWK <- as.data.frame(TWK)
+rownames(TWK) <- TWK$name
+TWK2 <- TWK[,c(1,2,3,4,5,6)]
+df1 <-rbind(rep(1,6),rep(0,10),TWK2) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(df1[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder, pfcol=colorsin , plwd=4 , plty=1,cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.2, "The Weeknd's Top Songs", font = 2)
+legend("right", legend = rownames(df1[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+The Weeknd's songs are generally highly danceable and with high energy.
+
+### Travis Scott's song attributes
+```{r,fig.width=10.5,fig.height=5.5}
+TST <- spot %>% filter(artist == "Travis Scott") %>% select(audio, artist, popularity,name) %>% arrange(desc(popularity)) %>% slice(1:5)
+TST <- as.data.frame(TST)
+rownames(TST) <- TST$name
+TST2 <- TST[,c(1,2,3,4,5,6)]
+df2 <-rbind(rep(1,6),rep(0,10),TST2) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(df2[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder, pfcol=colorsin , plwd=4 , plty=1,cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.2, "Travis Scott's Top Songs", font = 2)
+legend("right", legend = rownames(df2[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+Travis Scott's songs demonstrated a substantial diversity abilities. However, most of his songs tend to be low on speechiness factor.
+
+### Juice WRLD's song attributes
+```{r,fig.width=10.5,fig.height=5.5}
+JWD <- spot %>% filter(artist == "Juice WRLD") %>% select(audio, artist, popularity,name) %>% arrange(desc(popularity)) %>% slice(1:5)
+JWD <- as.data.frame(JWD)
+rownames(JWD) <- JWD$name
+JWD2 <- JWD[,c(1,2,3,4,5,6)]
+df3 <-rbind(rep(1,6),rep(0,10),JWD2) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(df3[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder, pfcol=colorsin , plwd=4 , plty=1,cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.2, "Juice WRLD's Top Songs", font = 2)
+legend("right", legend = rownames(df3[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+Juice WRLD's songs are highly diversified as well, and mostly high on speechiness, energy, danceability.
+
+### Taylor Swift's song attributes
+```{r,fig.width=10.5,fig.height=5.5}
+TS <- spot %>% filter(artist == "Taylor Swift") %>% select(audio, artist, popularity,name) %>% arrange(desc(popularity)) %>% slice(1:5)
+TS <- as.data.frame(TS)
+rownames(TS) <- TS$name
+TS2 <- TS[,c(1,2,3,4,5,6)]
+df4 <-rbind(rep(1,6),rep(0,10),TS2) 
+colorsborder=c(rgb(0.2,0.5,0.5,0.9), rgb(0.8,0.2,0.5,0.9) , rgb(0.7,0.5,0.1,0.9), rgb(0.5,0.4,0.8,0.9) )
+colorsin=c( rgb(0.2,0.5,0.5,0.4), rgb(0.8,0.2,0.5,0.4) , rgb(0.7,0.5,0.1,0.4) , rgb(0.5,0.4,0.8,0.4))
+radarchart(df4[-c(1,2),], axistype=0 , maxmin=F, pcol=colorsborder, pfcol=colorsin , plwd=4 , plty=1,cglcol="grey", cglty=1, axislabcol="black", cglwd=0.8, vlcex=1.2)
+mtext(cex = 1.2, "Taylor Swift's Top Songs", font = 2)
+legend("right", legend = rownames(df4[-c(1,2),]), title="Song Name", bty = "n", pch = 20, col = colorsborder, text.col= "black", cex=1)
+```
+
+Taylor Swift's songs are generally high in valence, danceability, energy, and relatively high on acoustiness.
+
+The songs produced by these artists are generally highly danceable, energetic. Some artists' work display a clear emphasis in certain genre, while for most the artists, the attributes are relatively diverse, and thus further examination through models should be conducted to make further insightful inference.
+
+
+
+
+#       Text Analysis
+
+##    Word Cloud 
+
+
+### Who are the most prolific artists?
+
+```{r,fig.width=10,fig.height=6}
+spot_2015 <- read.csv("spotify_subset.csv")
+
+artist<-as.vector(spot_2015$artists)
+artist_1<-gsub("', '", ",", artist)
+artist_1<-gsub("['[']", ",", artist)
+
+artist_list<-c()
+for(i in seq_along(artist_1)){
+  artist_1[i]<-substring(artist_1[i],3,nchar(artist_1[i])-2)
+  if(grepl(',',artist_1[i], fixed = TRUE)){
+    artist_list<-c(artist_list,strsplit(artist_1[i],',')[[1]])
+  }
+  else{
+    artist_list<-c(artist_list,artist_1[i])
+  }
+}
+
+df_artist_freq<-data.frame(table(artist_list))
+freq_artist<-df_artist_freq[order(df_artist_freq[,2],decreasing = T),]
+#Only show artists appeared more than 20 times
+freq_artist_1<-subset(freq_artist,freq_artist$Freq>=20)
+freq_artist_1<-freq_artist_1[-c(1,2),]
+
+wordcloud2(freq_artist_1,size = 0.3,shape = 'circle', color='random-light',fontFamily="Times New Roman",backgroundColor = "grey",minRotation = -pi/4, maxRotation = pi/4, rotateRatio = 0.4)
+```
+
+Here is a word cloud showing the most prolific artists from 2015 to 2020. Note that only artists with no less than 20 songs are shown in the graph, and more songs an artist published, larger the size the artist name is.
+
+From year 2015 to 2020, the most prolific singer is Drake, producing 157 songs, following by Lil Uzi Vert, Future, Travis Scott, Lil Baby, Bad Bunny and BTS with more than 100-song productions.
+
+Note that this graph may be a bit different from our previous visualization on artists, because co-producers of songs are also counted as artists in this analysis.
+
+### Are popular songs using the same song names?
+
+```{r,fig.width=10,fig.height=6}
+#getting what are popular words appeared in songs
+spot_1<-spot_2015[order(spot_2015[,"popularity"],decreasing = T),]
+spot_2<-spot_1[1:1000,]
+song<-spot_2$name
+song_1<-gsub("\\s*\\([^\\)]+\\)","",song)
+song_2<-gsub("[?,:-]","",song_1)
+song_2<-gsub("&","",song_2)
+song_2<-gsub("/","",song_2)
+
+song_name<-c()
+
+for(i in seq_along(song_2)){
+  song_word<-strsplit(song_2[i], " ")[[1]]
+  for(j in seq_along(song_word)){
+    if(song_word[j]!=""){
+      song_name<-c(song_name,song_word[j])
+    }
+  }
+}
+CapStr <- function(y) {
+  c <- strsplit(y, " ")[[1]]
+  paste(toupper(substring(c, 1,1)), substring(c, 2),
+      sep="", collapse=" ")
+}
+song_name<-sapply(song_name, CapStr)
+song_name<-gsub('Girls','Girl',song_name)
+song_name<-gsub('CON','Con',song_name)
+df_song_freq<-data.frame(table(song_name))
+freq_song<-df_song_freq[order(df_song_freq[,2],decreasing = T),]
+#Delete some meaningless words
+freq_song<-subset(freq_song,!(freq_song$song_name %in%c('The','Me','I', 'You','My','No','In','To','A','It','&','On','the','From','Be','Your',"Don't","Is","Of","De","De", "La", "For", "El", "Por","Will","10","2","By","Off","M谩s","So", "Remix","If","And","Up","Down","Out","IN","Into","One","Do","X","U","With","Can","Can't","At","That","What","This","Are","Who","The","En","Yourself","7","Didn't","Her","Don't","Just","AM","How","Less","More","I'm","Ur","ON","Were","Only","MY","We","Six")))
+#Only show words appeared more than 2 times
+freq_song_1<-subset(freq_song,freq_song$Freq>=2)
+
+wordcloud2(freq_song_1,shape = 'star',size = 0.9, color='random-dark',minRotation = -pi/4, maxRotation = pi/4, rotateRatio = 0.4,backgroundColor = "pink",fontFamily="Myriad Pro")
+```
+
+Here is a word cloud showing the most common words shown in song names of top 1000 popular song published from 2015 to 2020. Note that only words appeared no less than 2 times are shown, and more common a word is, bigger the word is.
+
+From 2015 to 2020, the most frequent words appeared in song names is 'Love', showing 36 times, with 'Girl', 'Go' and 'Like' following by more than 10 times occurrence.
+
+##    Sentiment Analysis {.tabset .tabset-fade .tabset-pills}
+
+
+```{r, include=FALSE}
+library(tidyverse)
+library(cowplot)
+library(corrplot)
+library(highcharter)
+require(scales)
+library(readr)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(wordcloud)
+library(wordcloud2)
+library(tm)
+library(RColorBrewer)
+library(shiny)
+library(sentimentr)
+```
+
+### (Song) Popularity and (Song Name) Positivity
+```{r,fig.width=10,fig.height=6}
+load("spotify_2000.Rda")
+
+spot_3<-spotify_2000[order(spotify_2000[,"popularity"],decreasing = T),]
+spot_4<-subset(spot_3,spot_3$popularity>0 & spot_3$sentiment!=0)
+
+spotify_positve_song<-spot_4[1:100,c('popularity',"sentiment")]
+
+ggplot(spotify_positve_song,aes(x = popularity, y = sentiment)) +
+    geom_point(color="#66b2b2", size = 3) +
+    geom_segment(aes(x=popularity, xend=popularity, 
+                     y=min(sentiment), yend=max(sentiment)),
+    linetype="dashed", size=0.1, color ="grey") +
+    coord_flip() +
+    labs(title = "100 Most Popular Songs and Positivity of their names", 
+        subtitle = "Positivity based sentiment analysis")+
+    theme_minimal() +
+    theme(text = element_text(size = 10),
+          plot.title = element_text(size = 16, color = "#66b2b2", face = "bold"),
+          plot.subtitle = element_text(size = 10, color =                     "darkslategrey"))+xlab("Popularity")+ylab("Sentiment")
+```
+
+For the 100 most popular songs from 2015 to 2020, there seems to be no clear correlation between popularity and sentiment. 
+
+
+### (Song) Non-popularity and (Song Name) Negativity
+
+```{r,fig.width=10,fig.height=6}
+spotify_negative_song<-spot_4[(nrow(spot_4)-100):nrow(spot_4),c('popularity',"sentiment")]
+
+ggplot(spotify_negative_song,aes(x = popularity, y = sentiment)) +
+    geom_point(color="tomato", size = 3) +
+    geom_segment(aes(x=popularity, xend=popularity, 
+                     y=min(sentiment), yend=max(sentiment)),
+    linetype="dashed", size=0.1, color ="grey") +
+    coord_flip() +
+    labs(title = "100 Most Non-popular Songs and Negativity of their names", 
+        subtitle = "Negativity based sentiment analysis")+
+    theme_minimal() +
+    theme(text = element_text(size = 10),
+          plot.title = element_text(size = 16, color = "#ff5a5f", face = "bold"),
+          plot.subtitle = element_text(size = 10, color =                     "darkslategrey"))+xlab("Popularity")+ylab("Sentiment")
+```
+
+Similarly, for the 100 most non-popular songs from 2015 to 2020, there seems to be no clear correlation between popularity and sentiment. We may consider to exclude sentiment when building model to explain popularity.
+
+ 
+#       Modelling part
+
+##    Data preparation for three model {.tabset .tabset-fade .tabset-pills}
+
+We hope to be able to compare the effects of different models to get the best model, so we adopt a unified approach to data.
+```{r, include=FALSE}
+library(dplyr)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(ROCR)
+library(grid)
+library(reshape2)
+library(viridis)
+library(rpart)
+library(rpart.plot)
+library(caret)
+```
+
+```{r}
+#Keep the data that we need.
+
+spotify_A <- read.csv('spotify_subset.csv')
+
+```
+
+### Check duplicated 
+
+One of our concern is that there might be duplicate songs in the data, which will affect the accuracy of our model. Thus, we first check whether there are duplicated values, if there are duplicated values, remove them, if not, use the original dataset for further processing.
+
+```{r}
+# Check duplicated
+spotify_A$id<-NULL
+spotify<- spotify_A[!duplicated(spotify_A),]
+dim(spotify_A)
+dim(spotify)
+```
+
+By comparing the number of songs before and after removing duplicated values, we can see that the original dataset has some duplicated values, so we use the data machine after removing duplicate values.
+
+### Normalization 
+
+In the previous visualization section, we see that different attributes have different measurement scales, so before starting to build the model, we need to normalize the data.
+
+```{r}
+# normalization
+
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x)))
+}
+
+spotify$acousticness <- normalize(spotify$acousticness)
+spotify$danceability <- normalize(spotify$danceability)
+spotify$duration_ms <- normalize(spotify$duration_ms)
+spotify$energy <- normalize(spotify$energy)
+spotify$instrumentalness <- normalize(spotify$instrumentalness)
+spotify$key <- normalize(spotify$key)
+spotify$liveness <- normalize(spotify$liveness)
+spotify$loudness <- normalize(spotify$loudness)
+spotify$mode <- normalize(spotify$mode)
+spotify$speechiness <- normalize(spotify$speechiness)
+spotify$tempo <- normalize(spotify$tempo)
+spotify$valence <- normalize(spotify$valence)
+head(spotify,5)
+```
+
+We will use this processed dataset.
+
+### Define popularity 
+
+We first check the quartile range of popularity to determine the threshold that defines whether the song is popular
+
+```{r}
+#check the quartile
+quantile(spotify$popularity)
+```
+
+Because 50% of the original popularity data is above 65, we decided to use 65 as the threshold for judging whether a song is popular. Those higher than the number are defined as popular, those lower than it or equal to it are defined as unpopular. Popularity is used as the dependent variable.
+
+
+```{r}
+# define popularity
+spotify$popularity <- replace(spotify$popularity,spotify$popularity < 65,0)
+spotify$popularity <- replace(spotify$popularity,spotify$popularity >= 65,1)
+```
+
+Then, we removed the four columns of artists, release_date, year, and name. We do not need these columns when analyzing whether the song is popular or not through song attributes in the later part.
+
+```{r}
+#remove some columns that we don't need here.
+spotify$artists<-NULL
+spotify$release_date<-NULL
+spotify$year<-NULL
+spotify$name<-NULL
+```
+
+Then we define the training set and the test set.
+
+```{r}
+#define the training set and the test set.
+set.seed(1520)
+sample <- sample(c(TRUE,FALSE),nrow(spotify),prob = c(0.75,0.25),replace = TRUE)
+
+spotify.train <- spotify[sample, ]
+spotify.test <- spotify[!sample, ]
+
+```
+
+##    Logistics Regression {.tabset .tabset-fade .tabset-pills}
+
+### Data preparation for Logistics Regression
+
+We use the data set processed in the previous part.
+
+```{r}
+spotify.train_Log <- spotify.train
+spotify.test_Log <- spotify.test
+```
+
+### Build the model
+First we put all the variables into the model
+```{r}
+fit.full <- glm(spotify.train_Log$popularity ~ ., data=spotify.train_Log, family=binomial())
+summary(fit.full)
+```
+
+Based on the result, we can find that some variables such as 'acousticness' and 'explicit' are not significantly correlated to popularity. So we removed all nonsignificant variables and get a new simplified model.
+
+```{r}
+fit.simplified <- glm(spotify.train_Log$popularity ~ danceability+duration_ms+energy+loudness+speechiness,data=spotify.train_Log, family=binomial())
+
+summary(fit.simplified)
+```
+
+Now all the variables are significant related to popularity. But The simplified model has an AIC that is very close to the full model. So next we are going to evaluate two models.
+
+
+```{r}
+anova(fit.simplified,fit.full,test="Chisq")
+```
+
+The nonsignificant p-value 0.6971 suggests that We can not reject the null hypothesis.The two models are equally good.
+
+
+Our objective is to build a model that can help spotify to classify all songs into two groups:popular songs and unpopular songs.So next we are going to plot the distribution of predicted probabilities for both positive instances and negative instances to see whether this model can help us achieve this goal.
+
+```{r}
+spotify.train_Log$pred <- predict(fit.simplified,newdata = spotify.train_Log,type="response")
+head(spotify.train_Log$pred)
+```
+```{r}
+spotify.test_Log$pred <- predict(fit.simplified,newdata = spotify.test_Log,type="response")
+head(spotify.test_Log$pred)
+```
+```{r}
+spotify.train_Log$popularity <- replace(spotify.train_Log$popularity,spotify.train_Log$popularity ==0,'No')
+spotify.train_Log$popularity <- replace(spotify.train_Log$popularity,spotify.train_Log$popularity == 1,'Yes')
+spotify.test_Log$popularity <- replace(spotify.test_Log$popularity,spotify.test_Log$popularity ==0,'No')
+spotify.test_Log$popularity <- replace(spotify.test_Log$popularity,spotify.test_Log$popularity == 1,'Yes')
+```
+
+```{r}
+ggplot(spotify.train_Log, aes(x=pred, color=popularity, linetype = popularity)) + geom_density()
+```
+
+As the graph shows, we can pick 0.5 as the threshold to help us distinguish the prediction result. A case with predicted probability above 0.5 can be classified as a popular song while the case with predicted probability below 0.5 can be classified as a nonpopular song for spotify. 
+
+
+### Tradeoff between precision and recall
+
+As mentioned in our key objective, We hope to build a predictive model for Spotify to help it predict more accurately whether the song will be popular before buying music rights. We try to ensure that Spotify can buy the copyright of true popular songs as much as possible while buying less unpopular songs. Otherwise, spotify will lost its customers. So we still need to confirm whether this threshold can balance the tradeoff between precision and recall of the classifier. 
+
+
+We draw two plots to compare the effect of threshold on precision and recall
+```{r}
+spotify.train_Log$outcome <- predict(fit.simplified,newdata = spotify.train_Log,type="response")
+predObj <- prediction(spotify.train_Log$outcome,spotify.train_Log$popularity)
+precObj <- performance(predObj, measure="prec")
+recObj <- performance(predObj,measure="rec")
+
+precision <- (precObj@y.values)[[1]]
+prec.x<-(precObj@x.values)[[1]]
+recall <- (recObj@y.values)[[1]]
+
+rocFrame <- data.frame(threshold=prec.x, precision=precision,recall=recall)
+rocFrame <- rocFrame[-1,]
+
+nplot<-function(plist){
+     n<-length(plist)
+     grid.newpage()
+     pushViewport(viewport(layout = grid.layout(n,1)))
+     vplayout=function(x,y) {viewport(layout.pos.row = x,layout.pos.col = y)}
+     for(i in 1:n){
+         print(plist[[i]],vp=vplayout(i,1))
+     }
+}
+
+pnull <- mean(as.numeric(levels(spotify.train_Log$popularity)[spotify.train_Log$popularity])) 
+```
+
+```{r}
+pl<-ggplot(rocFrame,aes(x=threshold))+geom_line(aes(y=precision)) + coord_cartesian(xlim=c(0,1),ylim=c(0,1))
+p2<-ggplot(rocFrame,aes(x=threshold))+geom_line(aes(y=recall)) + coord_cartesian(xlim=c(0,1),ylim=c(0,1))
+
+nplot(list(pl,p2))
+```
+
+These two graphs indicate that if we pick a threshold above 0.5, the precision of the classifier will not be improved significantly while the recall will decrease dramatically.
+
+
+Plot precision and recall against thresholds
+```{r}
+ErrorRate <- function(threshold, model, data, field) {
+    probs <- predict(model,newdata=data,type="response")
+    outcomes <- factor(probs > threshold, levels=c("FALSE","TRUE"))
+    table <- table(outcomes,data[,field])
+    print(table)
+    return((table[1,2]+table[2,1])/sum(table))
+}
+
+
+PlotErrorRateByThreshold<-function(model,data,field) {
+    require(ggplot2)
+    thresholds<-seq(0,1,0.01)
+    errors <- sapply(thresholds,ErrorRate,model,data,field)
+    df <- data.frame(Threshold=thresholds, Error.Rate = errors)
+    ggplot(df,aes(x=Threshold,y=Error.Rate)) + geom_line()
+}
+
+
+precision <- function(threshold,model, data, field){
+  response <- predict(model,newdata = data,type="response")
+  prediction <- ifelse(response>threshold,"Yes","No")
+  num.predicted.postive <- sum(prediction == "Yes")
+  num.correct.positive <- sum(prediction == "Yes" & prediction == data[,field])
+  return (num.correct.positive/num.predicted.postive)
+}
+
+recall <- function(threshold,model, data, field){
+  response <- predict(model,newdata = data,type="response")
+  prediction <- ifelse(response>threshold,"Yes","No")
+  num.predicted.postive <- sum(prediction == "Yes" & prediction == data[,field])
+  num.true.positive <- sum(data[,field] == "Yes")
+  return (num.predicted.postive/num.true.positive)
+}
+
+
+plotPrecisionVSRecall <- function(model, data, field){
+  require(ggplot2)
+  thresholds <- seq(0,1,by=0.01)
+  precisions <- sapply(thresholds,precision,model,data,field)
+  recalls <- sapply(thresholds,recall,model,data,field)
+  df <- data.frame(Threshold=thresholds,Precision=precisions,Recall=recalls)
+  df1<-melt(df,id.vars="Threshold",variable.name="Type")
+  ggplot(data = df1,aes(x=Threshold, y=value, color=Type,lty = Type)) + geom_line()
+}
+
+plotPrecisionVSRecall(fit.simplified,spotify.train_Log,"popularity")
+```
+
+
+According to this figure, we decide to choose the intersection point of the two lines as the threshold. Now, let’s use 0.5 as a threshold and apply the model on the test data.
+
+```{r}
+ctab.test <- table(pred=spotify.test_Log$pred > 0.5, popular=spotify.test_Log$popularity)
+ctab.test
+```
+
+
+```{r}
+precision.v <- ctab.test[2,2]/sum(ctab.test[2,])
+precision.v
+```
+```{r}
+recall.v <- ctab.test[2,2]/sum(ctab.test[,2])
+recall.v
+```
+
+### Important features
+```{r}
+coefficients(fit.simplified)
+```
+
+
+```{r}
+co <- data.frame(COEFFICIENT = rownames(summary(fit.simplified)$coef),
+p_value = summary(fit.simplified)$coef[,4],
+z_value = summary(fit.simplified)$coef[,3],
+SE = summary(fit.simplified)$coef[,2],
+Estimate = summary(fit.simplified)$coef[,1])
+co2 <- tibble::rownames_to_column(co,"Term")
+
+coefficient_plot<- ggplot(co2, aes(Term,Estimate))+geom_bar(stat="identity",width = 0.6,fill = viridis(6))+
+  scale_fill_viridis(option = "B")+coord_flip()
+coefficient_plot
+```
+
+
+After looking at the graph, we can arrive at the following conclusions:
+
+Since the coefficients of 'loudness' and 'danceability' are positive, it indicates that a louder and danceable song has a higher probability to be popular. If all other characteristics are the same, for a danceable song, the odd of being popular is exp(1.0833)=2.9544 times of a nondanceable song. It means spotify should invest more on danceable songs.
+
+In addition, the coefficients of 'duration_ms','energy' and 'speechiness' indicate that they are negatively correlated to popularity. 
+Since the precision of logistics regression model is only 0.57, we need to try some other models. 
+
+
+##    Decision Tree {.tabset .tabset-fade .tabset-pills}
+
+### Data preparation for Decision Tree
+
+We use the dataset processed in the previous part.
+
+```{r}
+spotify.train_DT <- spotify.train
+spotify.test_DT <- spotify.test
+```
+
+### Build the model 
+
+Before building the model, we need to convert popularity into a factor variable, and then we will use the two packages ‘rpart’ and ‘rpart.plot’ to build the decision tree model and visualize the decision tree.
+
+```{r}
+set.seed(1234)
+#Turn the dependent variable into factor
+spotify.train_DT$popularity<-as.factor(spotify.train_DT$popularity)
+head(spotify.train_DT, 5)
+
+#Build the model and plot the tree.
+tree_model <- rpart(popularity~., data = spotify.train_DT, method = 'class', parms=list(split="information"))
+rpart.plot(tree_model, box.palette = "GnBu")
+```
+
+From the decision tree, we can see that a song is most likely to be popular if it has higher level of danceability, loudness and less likely to be popular if it has longer duration_ms.
+
+For danceability, it represents how suitable a track is for dancing. If a song is not only suitable for singing performance, but also suitable for dance accompaniment, it means that the song is more likely to be spread widely, and it is easier to become popular. Compared to just listening, people can also use it in their daily activities, such as gyms, birthday parties, and so on. So it has more chance to be popular.
+
+For loudness, louder songs able to grab listeners' attention immediately when it starts to play, and it is more likely to be discovered by people. Thus, it is more likely to become popular.
+
+For duration_ms, songs with longer durations are less likely to become popular, which confirms the observations in the previous visualization section. Songs that are too long make the audience tired and longer tracks are also observed to include symphonies, background music without lyrics with limited audience, which are less likely for people to share as well, thus affecting its popularity.
+
+Now, we will check the accuracy of the decision tree model by calculating using the confusion matrix.
+
+```{r}
+#Check the confusion matrix and see the accuracy
+spotify.test_DT$popularity<-as.factor(spotify.test_DT$popularity)
+pred <- predict(tree_model, spotify.test_DT, type="class")
+confusionMatrix(pred, spotify.test_DT$popularity)
+```
+
+The accuracy of this model is 0.5472. We can try to improve the accuracy of the model by checking the cp value and pruning.
+
+
+### CP value & Prune 
+
+We first check the cp value of the model and decide the direction of our pruning.
+
+```{r}
+#Check the cp value to prune
+tree_model$cptable
+plotcp(tree_model)
+```
+
+From the graph of cp value, we decided that we can first try the model with a cp value of 0.034.
+
+```{r}
+#pruned tree (cp value=0.034) and check the accuracy
+tree_model.pruned <- prune(tree_model, cp=0.034)
+prp(tree_model.pruned, type=2, extra=104, fallen.leaves = TRUE, main="Decision Tree")
+tree_model.pred <- predict(tree_model.pruned, spotify.test, type="class")
+```
+
+```{r}
+# Check the confusion matrix
+spotify.test_DT$popularity<-as.factor(spotify.test_DT$popularity)
+pred <- predict(tree_model.pruned, spotify.test, type="class")
+confusionMatrix(pred, spotify.test_DT$popularity)
+```
+
+After pruning, the only variable that can be used to explain whether a song is a popular song is the danceability, and the accuracy drops to 0.5418. It seems that when the cp value = 0.034, the performance of the model is not enhanced.
+
+Then, we try the model with a cp value of 0.01.
+
+```{r}
+#pruned tree (cp value=0.01) and check the accuracy
+tree_model.pruned <- prune(tree_model, cp=0.01)
+prp(tree_model.pruned, type=2, extra=104, fallen.leaves = TRUE, main="Decision Tree")
+tree_model.pred <- predict(tree_model.pruned, spotify.test_DT, type="class")
+```
+
+```{r}
+# Check the confusion matrix
+spotify.test_DT$popularity<-as.factor(spotify.test_DT$popularity)
+pred <- predict(tree_model.pruned, spotify.test, type="class")
+confusionMatrix(pred, spotify.test_DT$popularity)
+```
+
+Through pruning and checking the cp value, we found that the most accurate model is still our original model.
+
+The accuracy of this model is only 0.5472, which is even worse than the accuracy of the logistic model used before. We decided to try random forests to see if we would get better results.
+
+##    Random Forest {.tabset .tabset-fade .tabset-pills}
+
+### Data preparation for Random forest
+
+We use the dataset processed in the previous part.
+
+```{r}
+spotify.train_RF <- spotify.train
+spotify.test_RF <- spotify.test
+```
+
+
+### Build the model 
+
+In the following part, we build the Random Forest model to classify which variables will affect the popularity of songs. 
+```{r}
+set.seed(6666)
+
+rf.train<-randomForest(as.factor(popularity) ~.,
+                       data=spotify.train_RF,importance=TRUE)
+rf.train
+plot(rf.train,main="randomforest origin")
+```
+
+After running the training data, it is found from the confusion matrix that there are some misclassfications (1791+1753), the error rate is 40.63%.
+
+
+
+To test the model:
+```{r}
+set.seed(6666)
+rf.test<-predict(rf.train, newdata = spotify.test_RF, type = "class" )
+rf.cf<-caret::confusionMatrix(as.factor(rf.test),as.factor(spotify.test_RF$popularity))
+rf.cf
+```
+
+After running the test data, the result showed that the model accuracy is 61.19%, not very high but better than the previous two models. So this model could be used.
+
+### Important feature 
+
+```{r}
+importance(rf.train)
+varImpPlot(rf.train)
+```
+
+Based on the figures of MeanDecreaseAccuracy and MeanDecreaseGini, it can be seen that variables such as danceability and loudness are the most important attributes of determining the popularity of songs.
+
+##    Model comparison
+
+By trying different models, we finally have the highest accuracy model produced by using random forest. We will use it as the final decision making tool.
+
+We can see from the songs produced in the last five years, the factors related to the popularity of the song are undoubtedly danceability, loudness and duration_ms.
+
+Combining the three models, it is not difficult to see that the higher the danceability of the song, the higher the loudness, while other factors remain unchanged, the song is more likely to be popular. However, when the duration_ms is higher while other factors remain the same, the song is more likely to be unpopular.
+
+We can probably describe that in order of a song in recent years to become popular, it should be a song with strong rhythm, loudness, and not too long. The more in line with these characteristics, the more likely the song is a popular song.
+
+This is very helpful for Spotify to review new songs in recent years and invest funds in songs that are most likely to become popular.
+
+
+#       Conclusion
+
+Spotify is a well-known music service platform. The biggest advantage of Spotify is the sense of experience. It can intelligently recommend a large number of new works according to the audience's personal taste, and guarantee a certain quality. And its biggest source of income is users who are willing to pay for such services. The second source of income is from the advertisement it inserts during the free using period. However, as we mentioned previously, despite the revenue generated, Spotify has low profit margin due to high royalties paid.
+
+Therefore, in order to better improve audience's experience and also increase on its profit margin, Spotify need to identify which songs to invest based on the song's popularity. Spotify need to be selective when investing in songs. Besides purchasing songs from well-known artists, which are favoured by most audiences, Spotify should also include good works by new artists to increase on its variety. It is understandable that purchasing new tracks that are produced by less well-known artists is a very risky thing as these songs might not be popular in the market. Thus, a web tool that can help Spotify to determine whether a song will become popular will come in handy.
+
+In addition, we could see a change in the music trend in different time periods. As music productions are getting easier and there are more tracks being produced each year, it is more important for Spotify to identity the songs that are more likable by the audience. Through our model analysis, we can find that songs with high danceability, high loudness and low duration_ms are the popular factors in recent years, and Spotify could make use of the tool to analyze the songs, and improve on its service.
+
