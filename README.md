@@ -12,7 +12,7 @@ If you are interested to see our models and visualiaztion part, you may choose R
 
 If you want to know how the model is applied, run the "Shiny App.R" file to have a look. 
 
-If you want a more throughful report, you can choose HTML or Powerpoint(.pptx) for better understanding.
+If you prefer a more throughful report, you can choose HTML or Powerpoint(.pptx) for better understanding.
 
 _Note that HTML and Powerpoint(.pptx) are in 'doc' folder._
 
